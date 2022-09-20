@@ -1,0 +1,557 @@
+library(dplyr)
+library(forecast)
+library(stringi)
+library(lubridate)
+library(ggplot2)
+library(tseries)
+library(readxl)
+library(writexl)
+library(naniar)
+library(zoo)
+library(PerformanceAnalytics)
+library(cowplot)
+library(scales)
+library(ggpubr)
+library(DescTools)
+library(dhReg)
+
+#*****************************************************
+#           Dialler Freestyle September 2020 Forecast
+#*****************************************************
+
+#Load the data
+Dial_Free=read_excel("~/VM Forecasting/Dialler Free Forecast/nov 12_Dialler Freestyle/Collection LOB'S Day Level DF Data_11_12.xlsx", sheet=1)
+
+
+#****EDA****
+#************
+
+#Take a peek at the dataset
+head(Dial_Free)
+tail(Dial_Free)
+#Structure of Data
+str(Dial_Free)
+# Summary of the data
+summary(Dial_Free)
+
+#extracting month year moth and week from the data variable
+Dial_Free$date=as.Date(Dial_Free$date)
+Dial_Free$MTH<-month(Dial_Free$date)
+Dial_Free$YEAR<-year(Dial_Free$date)
+Dial_Free$day<-day(Dial_Free$date)
+Dial_Free$WEEKDAY<-wday(Dial_Free$date)
+View(Dial_Free)
+
+#Remove Sunday data
+Dial_Free=Dial_Free[Dial_Free$WEEKDAY!=1,]
+
+#**** Missing Data *********
+#***************************
+
+# Sum of missing values
+sum(is.na(Dial_Free$volume))
+apply(Dial_Free, 2, function(x) sum(is.na(x)))
+
+# View Missing values
+mis_pts=ggplot(Dial_Free, aes(x=WEEKDAY, y=volume))+geom_miss_point()
+
+# mean volume for every week
+aggregate(Dial_Free$volume, by=list(Dial_Free$WEEKDAY), mean, na.rm=T)
+
+# replace NA's with particular weekday mean
+Dial_Free$volume=ifelse(is.na(Dial_Free$volume), ifelse(Dial_Free$WEEKDAY==2,519, 
+                                                        ifelse(Dial_Free$WEEKDAY==3,455, 
+                                                               ifelse(Dial_Free$WEEKDAY==4,480, Dial_Free$volume))),Dial_Free$volume )
+# Sum of missing values
+sum(is.na(Dial_Free$volume))
+apply(Dial_Free, 2, function(x) sum(is.na(x)))
+
+#Plot of data
+original_data=ggplot(Dial_Free, aes(x=date, y=volume))+geom_line()+labs(title = 'Data from Jan 2019 to july 2020 ')
+
+# Check for number of volumes which are zero
+ovol=filter(Dial_Free, volume==0) # 7
+# replace 0 volume with weekday mean
+aggregate(Dial_Free$volume, by=list(Dial_Free$WEEKDAY), mean, na.rm=T)
+Dial_Free$volume=ifelse(Dial_Free$volume==0, ifelse(Dial_Free$WEEKDAY==1,0, 
+                                                    ifelse(Dial_Free$WEEKDAY==2,519, 
+                                                           ifelse(Dial_Free$WEEKDAY==3,445, 
+                                                                  ifelse(Dial_Free$WEEKDAY==4,480,
+                                                                         ifelse(Dial_Free$WEEKDAY==5,475, 
+                                                                                ifelse(Dial_Free$WEEKDAY==6,531, 
+                                                                                       ifelse(Dial_Free$WEEKDAY==7,252, Dial_Free$volume))))))),Dial_Free$volume)
+no0volume_data=ggplot(Dial_Free, aes(x=date, y=volume))+geom_line()+labs(title = 'Data from Jan 2019 to july 2020 ')
+
+# Sum of missing values
+apply(Dial_Free, 2, function(x) sum(is.na(x)))
+
+# create variables of the week and month of each observation:
+Dial_Free$Month <- as.Date(cut(Dial_Free$date,
+                               breaks = "month"))
+Dial_Free$Week <- as.Date(cut(Dial_Free$date,
+                              breaks = "week",
+                              start.on.monday = FALSE)) # changes weekly break point to Sunday
+# 2019 and 2020 Data
+Data_2019<-Dial_Free[Dial_Free$date<=as.Date("2019-12-31"),]
+Data_2020=Dial_Free[Dial_Free$date>as.Date("2019-12-31"),]
+Data_2019_August=Dial_Free[Dial_Free$date<=as.Date("2019-08-08"),]
+
+#***** PLOTS of Data ****
+#************************
+
+#Plot of the raw data
+ggplot(Dial_Free, aes(x=date, y=volume))+geom_line()+labs(title = 'Data from Jan 2019 to july 2020 ')
+
+# Data Behaviour Chart of 2019 and 2020
+g1=ggplot(Data_2019, aes(x=date, y=volume))+geom_line()+labs(title = 'Dialler Free 2019')
+g2=ggplot(Data_2020,aes(x=date, y=volume))+geom_line()+labs(title='Dialler Free 2020')
+g3=ggplot(Data_2019_july,aes(x=date, y=volume))+geom_line()+labs(title='Dialler Free 2019 till August')
+
+
+#Horizontal comparison plot
+ggarrange(g3, g2,ncol = 1, nrow = 2)
+
+#checking summary of call volume and Colnames
+summary(Dial_Free$volume)
+colnames(Dial_Free)
+
+
+# ***** mean and standard deviation  and summary***
+#****************************************
+
+#*** Analysis of total Data
+
+# mean of Data volume
+mean(Dial_Free$volume) #464.3
+mean(Data_2019_july$volume) #522.2
+mean(Data_2020$volume) #397.4
+
+# Stand Deviation of Data volume
+sd(Dial_Free$volume) # 142.9
+sd(Data_2019_july$volume) #136.4
+sd(Data_2020$volume) #133.9
+
+# summary of Data volume
+summary(Dial_Free$volume) 
+summary(Data_2019_july$volume) 
+summary(Data_2020$volume) 
+
+
+# graph by da:
+ggplot(data = Dial_Free,
+       aes(date, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+# graph by comparison:
+gdj1=ggplot(data = Data_2019_july,
+            aes(date, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+gdj2=ggplot(data = Data_2020,
+            aes(date, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+# vertical comparison plot
+plot_grid(gdj1, gdj2, labels = "AUTO")
+#Horizontal comparison plot
+ggarrange(gdj1, gdj2,labels = c("2019", "2020"),ncol = 1, nrow = 2)
+
+#*** Analysis of Month
+
+# Checking the mean of every month
+z_sd <- zoo(Dial_Free$volume, Dial_Free$date)
+aggregate(z_sd, as.yearmon, mean)
+# Code to display mean of every month column wise
+df=t(aggregate(z_sd, as.yearmon, mean))
+rownames(df) <- substr(rownames(df), 1, 11)          # only necessary if you get funny row names from data import; if your data is as it's shown you can skip this step.
+df.agg <- aggregate(df, by=list(rownames(df)), sum)
+row.names(df.agg) <- df.agg[[1]]
+t(df.agg[-1])
+
+# Month wise mean till june comparison
+mt1=aggregate(Data_2019_july$volume, by=list(Data_2019_july$MTH), mean, na.rm=T)
+mt2=aggregate(Data_2020$volume, by=list(Data_2020$MTH), mean, na.rm=T)
+cbind(mt1,mt2)
+
+# Checking the standard deviation of every month
+z_sd <- zoo(Dial_Free$volume, Dial_Free$date)
+aggregate(z_sd, as.yearmon, sd)
+# Code to display standard deviation of every month column wise
+df=t(aggregate(z_sd, as.yearmon, sd))
+rownames(df) <- substr(rownames(df), 1, 11)          # only necessary if you get funny row names from data import; if your data is as it's shown you can skip this step.
+df.agg <- aggregate(df, by=list(rownames(df)), sum)
+row.names(df.agg) <- df.agg[[1]]
+t(df.agg[-1])
+
+# Standard Deviation by month comparison till june
+aggregate(Dial_Free$volume, by=list(Dial_Free$MTH), sd, na.rm=T)
+m1=aggregate(Data_2019_july$volume, by=list(Data_2019_july$MTH), sd, na.rm=T)
+m2=aggregate(Data_2020$volume, by=list(Data_2020$MTH), sd, na.rm=T)
+cbind(m1,m2)
+
+# Checking the summary of every month
+z_sd <- zoo(Dial_Free$volume, Dial_Free$date)
+aggregate(z_sd, as.yearmon, summary)
+
+#mean of month june of 2019 and 2020
+mean(Dial_Free$volume[Dial_Free$YEAR==2019&Dial_Free$MTH==6]) # 480.48
+mean(Dial_Free$volume[Dial_Free$YEAR==2020&Dial_Free$MTH==6]) #382.1538
+
+#standard deviation of month june 2019 and 2020
+sd(Dial_Free$volume[Dial_Free$YEAR==2019&Dial_Free$MTH==6]) #123.3826
+sd(Dial_Free$volume[Dial_Free$YEAR==2020&Dial_Free$MTH==6]) #109.7257
+
+#summary of month june 2019 and 2020
+summary(Dial_Free$volume[Dial_Free$YEAR==2019&Dial_Free$MTH==6])
+summary(Dial_Free$volume[Dial_Free$YEAR==2020&Dial_Free$MTH==6])
+
+# graph by month:
+# Bar plot
+ggplot(data=Dial_Free, aes(x=MTH, y=volume)) + geom_bar(stat="identity")
+gm1=ggplot(data=Data_2019_july, aes(x=MTH, y=volume)) + geom_bar(stat="identity")+labs(title='2019')
+gm2=ggplot(data=Data_2020, aes(x=MTH, y=volume)) + geom_bar(stat="identity")+labs(title='2020')
+plot_grid(gm1, gm2, labels = "AUTO")
+
+# graph by month:
+ggplot(data = Dial_Free,
+       aes(Month, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+# graph of 2019 and 2020 month comparison till june:
+gmj1=ggplot(data = Data_2019_july,
+            aes(Month, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+gmj2=ggplot(data = Data_2020,
+            aes(Month, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+# vertical comparison plot
+plot_grid(gmj1, gmj2, labels = "AUTO")
+#Horizontal comparison plot
+ggarrange(gmj1, gmj2,labels = c("2019", "2020"),ncol = 1, nrow = 2)
+
+#*** Analysis by Week
+
+#Week wise mean
+aggregate(Dial_Free$volume, by=list(Dial_Free$WEEKDAY), mean, na.rm=T)
+wk1=aggregate(Data_2019_july$volume, by=list(Data_2019_july$WEEKDAY), mean, na.rm=T)
+wk2=aggregate(Data_2020$volume, by=list(Data_2020$WEEKDAY), mean, na.rm=T)
+cbind(wk1,wk2)
+
+# Standard Deviation by week
+aggregate(Dial_Free$volume, by=list(Dial_Free$WEEKDAY), sd, na.rm=T)
+w1=aggregate(Data_2019_july$volume, by=list(Data_2019_july$WEEKDAY), sd, na.rm=T)
+w2=aggregate(Data_2020$volume, by=list(Data_2020$WEEKDAY), sd, na.rm=T)
+cbind(w1,w2)
+
+# summary by week
+aggregate(Dial_Free$volume, by=list(Dial_Free$WEEKDAY), summary, na.rm=T)
+w1=aggregate(Data_2019_july$volume, by=list(Data_2019_july$WEEKDAY), summary, na.rm=T)
+w2=aggregate(Data_2020$volume, by=list(Data_2020$WEEKDAY), summary, na.rm=T)
+cbind(w1,w2)
+
+# graph by week:
+# Bar plot week
+ggplot(data=Dial_Free, aes(x=WEEKDAY, y=volume)) + geom_bar(stat="identity")
+gw1=ggplot(data=Data_2019_july, aes(x=WEEKDAY, y=volume)) + geom_bar(stat="identity")+labs(title='2019')
+gw2=ggplot(data=Data_2020, aes(x=WEEKDAY, y=volume)) + geom_bar(stat="identity")+labs(title='2020')
+plot_grid(gw1, gw2, labels = "AUTO")
+
+# Line plot for week
+ggplot(data = Dial_Free,
+       aes(Week, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+# graph by comparison by mean:
+gwj1=ggplot(data = Data_2019_july,
+            aes(Week, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+gwj2=ggplot(data = Data_2020,
+            aes(Week, volume)) +
+  stat_summary(fun = mean, # adds up all observations for the month
+               geom = "line") + # or "line"
+  scale_x_date(
+    labels = date_format("%Y-%m-%d"),
+    breaks = "1 month") # custom x-axis labels
+
+#Horizontal comparison plot
+ggarrange(gwj1, gwj2,labels = c("2019", "2020"),ncol = 1, nrow = 2)
+
+
+#**** Check and measures for Outliers *****
+#*********************************************
+
+#checking call volume distibution percentile wise for total data
+round(quantile(Dial_Free$volume,c(0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.97,1)),0)
+
+#*** Treating Outliers
+
+#PLOTING outliers for the Dataset
+o1=ggplot(Dial_Free,aes(y=volume))+geom_boxplot()+labs(title = 'With Outliers')
+
+# Number of volumes below 100
+below_100=filter(Dial_Free, volume<100)
+above_800=filter(Dial_Free, volume>800)
+aggregate(Dial_Free$volume, by=list(Dial_Free$WEEKDAY), mean, na.rm=T)
+Dial_Free$mod_call_volume=ifelse(Dial_Free$volume<100, ifelse(Dial_Free$WEEKDAY==2,541, Dial_Free$volume),Dial_Free$volume)
+Dial_Free$mod_call_volume=ifelse(Dial_Free$mod_call_volume>800, ifelse(Dial_Free$WEEKDAY==2,541, Dial_Free$mod_call_volume),Dial_Free$mod_call_volume)
+# weekdaymean1<-Dial_Free%>%group_by(WEEKDAY)%>%summarise(wm=mean(volume),sd=sd(volume))
+# colnames(Dial_Free)
+# Dial_Free<-merge(Dial_Free,weekdaymean1,by.x ="WEEKDAY",by.y ="WEEKDAY",all.x = TRUE,all.y = FALSE)
+# Dial_Free$sd1.5<-Dial_Free$wm+Dial_Free$sd*1.5
+# Dial_Free$sd1.5neg<-Dial_Free$wm-Dial_Free$sd*1.5
+# Dial_Free$sd3<-Dial_Free$wm+Dial_Free$sd*3
+# Dial_Free$sd3neg<-Dial_Free$wm-Dial_Free$sd*3
+# 
+# Dial_Free<-Dial_Free[order(Dial_Free$date),]
+# 
+# Dial_Free$mod_call_volume<-ifelse(Dial_Free$volume>Dial_Free$sd1.5|Dial_Free$volume<Dial_Free$sd1.5neg,Dial_Free$wm,Dial_Free$volume)
+# Dial_Free$outlier_status<-ifelse(Dial_Free$volume>Dial_Free$sd1.5|Dial_Free$volume<Dial_Free$sd1.5neg,1,0)
+# rem_outliers=ggplot(Dial_Free,aes(y=mod_call_volume))+geom_boxplot()+labs(title = ' after outlier treatment')
+# colnames(Dial_Free)
+# mod_vol_data=ggplot(Dial_Free,aes(x=date,y=mod_call_volume))+geom_line()
+
+o2=ggplot(Dial_Free,aes(y=mod_call_volume))+geom_boxplot()+labs(title = 'removed Outliers')
+# Boxplot to see any seasonal effects
+# Boxplot for monthly volume
+boxplot(Dial_Free$mod_call_volume~Dial_Free$MTH, outline=FALSE, main='Monthly Volume')
+
+# Boxplot for Weekly Volume
+boxplot(Dial_Free$mod_call_volume~Dial_Free$WEEKDAY, outline=FALSE, main='Weekly Volume')
+
+#***** Time Series Analysis ****
+#**********************************
+
+#converting into time series 
+findfrequency(Dial_Free)
+
+# Time Series data
+DF=ts(Dial_Free$mod_call_volume, start = 3, frequency = 6)
+
+# Plot of Time Series
+autoplot(DF)
+
+# Decompose
+autoplot(decompose(DF))
+
+#checking For stationary
+adf.test(DF)  #p-value = 0.01, 99% stationary
+
+#converting into test and and train
+
+#********** 44 days Forecast till September 30th ***************
+#checking length and time stamp
+length(DF) #583
+time(DF)#583-44=539
+
+# Tain And Test data
+DF_train4<-window(DF,start=3,end=92.7)
+DF_test4=window(DF,start=92.7)
+
+#**** applying models ****
+#****************************
+
+#mean Model
+mean_model<-meanf(DF_train4,h=44)
+#Checking Accuracy
+accuracy(mean_model,DF_test4) # MAPE: 29.23
+#ploting
+plot(mean_model)
+#Checking assumptions
+autoplot(checkresiduals(mean_model$residuals))
+
+# Naive Model
+naive_model<-naive(DF_train4,h=44)
+#Checking Accuracy
+accuracy(naive_model,DF_test4) # MAPE : 48.68
+#ploting
+plot(naive_model)
+#Checking assumptions
+autoplot(checkresiduals(naive_model$residuals))
+
+#holtwinter model
+df_hw2=HoltWinters(DF_train4)
+df_hw_test2=forecast(df_hw2, h=44)
+plot(df_hw_test2)
+accuracy(df_hw_test2, DF_test4) # MAPE:14.3
+checkresiduals(df_hw2$residuals)
+
+#ets model
+et_DF=ets(DF_train4)
+et_DF_test=forecast(et_DF, h=44)
+plot(et_DF_test)
+accuracy(et_DF_test, DF_test4) # MAPE:15.2
+checkresiduals(et_DF$residuals)
+
+# tbats
+tbats_DF=tbats(DF_train4)
+tbats_DF_test=forecast(tbats_DF, h=44)
+plot(tbats_DF_test)
+accuracy(tbats_DF_test, DF_test4) # MAPE: 16.03
+
+
+# arima
+arima_DF=auto.arima(DF_train4,trace=T)
+arima_DF_test=forecast(arima_DF, h=44)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test4) # MAPE: 13.96
+checkresiduals(arima_DF_test$residuals)
+
+# arima with BoxCox.lambda
+BoxCox.lambda(DF_train4) 
+arima_DF=auto.arima(DF_train4,trace=T, lambda = BoxCox.lambda(DF_train4))
+arima_DF_test=forecast(arima_DF, h=44)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test4) # MAPE:15.31
+checkresiduals(arima_DF_test$residuals)
+
+#stl
+stl_DF=stl(DF_train4, s.window = 'periodic')
+stl_DF_test=forecast(stl_DF, h=44)
+plot(stl_DF_test)
+accuracy(stl_DF_test, DF_test4) # MAPE: 15.31
+checkresiduals(stl_DF_test$residuals)
+
+#nnetar
+set.seed(75) 
+library(forecast)
+nnetar_df=nnetar(DF_train4)
+nnetar_df_test=forecast(nnetar_df, h=44, PI=F)
+plot(nnetar_df_test)
+accuracy(nnetar_df_test, DF_test4) # MAPE:18.2
+
+set.seed(30) 
+library(forecast)
+nnetar_df=nnetar(DF_train4)
+nnetar_df_test=forecast(nnetar_df, h=44, PI=F)
+plot(nnetar_df_test)
+accuracy(nnetar_df_test, DF_test4) # MAPE: 18.49
+
+# tbats forecast_for agreed num
+# tbats
+tbats_DF=tbats(DF)
+tbats_DF_forecast=forecast(tbats_DF, h=44)
+plot(tbats_DF_forecast)
+
+stl_DF=stl(DF, s.window = 'periodic')
+stl_DF_test=forecast(stl_DF, h=44)
+plot(stl_DF_test)
+
+arima_DF=auto.arima(DF,trace=T)
+arima_DF_test=forecast(arima_DF, h=44)
+plot(arima_DF_test) 
+
+BoxCox.lambda(DF)
+arima_box_DF=auto.arima(DF,trace=T, lambda = BoxCox.lambda(DF))
+arima_box_DF_test=forecast(arima_box_DF, h=44)
+plot(arima_box_DF_test)
+
+df_hw1=HoltWinters(DF)
+df_hw_test1=forecast(df_hw1, h=44)
+plot(df_hw_test1)
+
+et_DF=ets(DF)
+et_DF_test=forecast(et_DF, h=44)
+plot(et_DF_test)
+
+#*** generating forecastdates for 36 days
+
+dates_no<-seq(as.Date("2020-11-11","%Y-%m-%d"),as.Date("2020-12-31","%Y-%m-%d"),by=1)
+
+dates_no<-as.data.frame(as.Date(dates_no))
+dates_no$`as.Date(dates_no)`<-as.Date(dates_no$`as.Date(dates_no)`)
+dates_no$V2<-wday(dates_no$`as.Date(dates_no)`)
+
+dates_no<-dates_no[dates_no$V2!=1,] 
+
+DF_hw<-as.data.frame(df_hw_test1)
+DF_tbats<-as.data.frame(tbats_DF_forecast)
+DF_arima<-as.data.frame(arima_DF_test)
+DF_arimabox<-as.data.frame(arima_box_DF_test)
+DF_forecast2<-cbind(dates_no,DF_hw$`Point Forecast`,DF_tbats$`Point Forecast`,
+                    DF_arima$`Point Forecast`, DF_arimabox$`Point Forecast`)
+
+
+write_xlsx(DF_forecast2,path = "44days December_DF_DayForecast11_12.xlsx")
+getwd()
+
+#*******************************************************************
+#       Interval Forecast
+#******************************************************************
+
+#Load the data
+DF_Interval=read_excel("~/VM Forecasting/Dialler Free Forecast/Sept 14_09_Dialler Freestyle/Collections LOBS's Interval Data 2020.xlsx", sheet=4)
+
+# Changing column name
+colnames(DF_Interval)[1]='Time_Interval'
+
+DF_Interval$Time_Interval=openxlsx::convertToDateTime(DF_Interval$Time_Interval,na.rm=T)
+DF_Interval$Time_Interval=format(DF_Interval$Time_Interval, "%H:%M:%S",na.rm=T)
+View(DF_Interval)
+
+df_int=as.data.frame(t(DF_Interval))
+
+df_int$V1=openxlsx::convertToDate(df_int$V1,na.rm=T)
+
+# Remove rows with all NA Values
+df_int1=apply(df_int,1,function(x) all(is.na(x)))
+df_int2=df_int[!df_int1,]
+#df_int2$WEEKDAY<-wday(df_int2$V1)
+df_int2$V2=NULL
+
+#Set 1st row as column names
+names(df_int2) <- as.matrix(df_int2[1, ])
+
+# Remove first row(Weekday)
+df_int2=df_int2[-1,]
+
+# rename 1st column name
+colnames(df_int2)[1]='Date'
+
+# making row names as null
+rownames(df_int2)=NULL
+
+
+# Treating Missing Values
+sum(is.na(df_int2))
+colSums(is.na(df_int2))
+df_int2[is.na(df_int2)]=0
+
+## mean volume for every week
+df_int2$weekday=wday(df_int2$Date)
+View(df_int2)
+Wday_int_avg=as.data.frame(aggregate(df_int2, by=list(df_int2$weekday), mean, na.rm=T))
