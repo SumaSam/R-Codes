@@ -1,0 +1,175 @@
+library(dplyr)
+library(forecast)
+library(stringi)
+library(lubridate)
+library(ggplot2)
+library(tseries)
+library(readxl)
+library(writexl)
+library(naniar)
+library(zoo)
+library(PerformanceAnalytics)
+library(cowplot)
+library(scales)
+library(ggpubr)
+library(DescTools)
+library(dhReg)
+
+
+#Conversion of percentages########
+mcr_percentage=read_excel("~/VM Forecasting/2023/March 2023/SA Actual Volume and Intervals.xlsx", sheet=3)
+mcr_percentage1=mcr_percentage[,-c(2,3)]
+mcr_t=mcr_percentage1
+colnames(mcr_t)[1]='Date'
+str(mcr_t$Date)
+
+
+#MC_Trend_2022############# Nov Dec Jan
+Trend_2022=mcr_t[mcr_t$Date>=as.Date("2023-01-01")&mcr_t$Date<=as.Date("2023-02-28"),]
+
+#remove regressor days
+new_trend_days=all_MC_Trend_2022[-c(32,63,64,65),] # trend
+
+# Xreg Dates 2022
+Black_friday_26Nov=mcr_t[mcr_t$Date==as.Date("2019-11-29"),]
+St_Andrew_Day=mcr_t[mcr_t$Date==as.Date("2019-11-30"),]
+# Christmas_25Dec=mcr_t[mcr_t$Date==as.Date("2019-12-25"),]
+# BoxersDay_26Dec=mcr_t[mcr_t$Date==as.Date("2019-12-26"),]
+# New_year_1Jan=mcr_t[mcr_t$Date==as.Date("2020-01-01"),]
+
+
+data=as.data.frame(t(Trend_2022))
+data=data[-1,]
+
+data=as.data.frame(data)
+sum(is.na(data))
+colSums(is.na(data))
+data[is.na(data)]=0
+View(data)
+sum(is.na(data))
+
+#percentage conversions
+data[] <- lapply(data, function(x) type.convert(as.character(x)))
+
+# Percentage conversion
+MC_Percentage=as.data.frame(apply(data[,1:59,drop=F],2,function(x) x/sum(x)))
+
+# For Xreg
+MC_Percentage=as.data.frame(apply(data[,1,drop=F],2,function(x) x/sum(x)))
+write_xlsx(MC_Percentage,"MC_NewYear_1Jan_2020_perce0707_21.xlsx")
+
+
+# trend 2022(3 months)
+v3=as.data.frame(rowMeans(MC_Percentage[, c(1,8,15,22,29,36,43,50,57,64,71,78,85,92)]))
+v4=as.data.frame(rowMeans(MC_Percentage[, c(2,9,16,23,30,37,44,51,58,65,72,79,86)]))
+v5=as.data.frame(rowMeans(MC_Percentage[, c(3,10,17,24,31,38,45,52,59,66,73,80,87)]))
+v6=as.data.frame(rowMeans(MC_Percentage[, c(4,11,18,25,32,39,46,53,60,67,74,81,88)]))
+v7=as.data.frame(rowMeans(MC_Percentage[, c(5,12,19,26,33,40,47,54,61,68,75,82,89)]))
+v1=as.data.frame(rowMeans(MC_Percentage[, c(  13,20,27,34,41,48,55,62,69,76,83,90)]))
+v2=as.data.frame(rowMeans(MC_Percentage[, c(7,14,21,28,35,42,49,56,63,70,77,84,91)]))
+
+
+# trend 2022(2 months)
+v1=as.data.frame(rowMeans(MC_Percentage[, c(1,8,15,22,29,36,43,50,57)]))
+v2=as.data.frame(rowMeans(MC_Percentage[, c(2,9,16,23,30,37,44,51,58)]))
+v3=as.data.frame(rowMeans(MC_Percentage[, c(3,10,17,24,31,38,45,52,59)]))
+v4=as.data.frame(rowMeans(MC_Percentage[, c(4,11,18,25,32,39,46,53)]))
+v5=as.data.frame(rowMeans(MC_Percentage[, c(5,12,19,26,33,40,47,54)]))
+v6=as.data.frame(rowMeans(MC_Percentage[, c(6,13,20,27,34,41,48,55)]))
+v7=as.data.frame(rowMeans(MC_Percentage[, c(7,14,21,28,35,42,49,56)]))
+
+
+colnames(v1)[1]='Sun'
+colnames(v2)[1]='Mon'
+colnames(v3)[1]='Tue'
+colnames(v4)[1]='wed'
+colnames(v5)[1]='Thurs'
+colnames(v6)[1]='Fri'
+colnames(v7)[1]='Sat'
+
+
+#avg_MC_int=as.data.frame(rbind(v1,v2,v3,v4,v5,v6,v7))
+avg_MC_int=as.data.frame(cbind(v1,v2,v3,v4,v5,v6,v7))
+
+Trend1=avg_MC_int
+write_xlsx(avg_MC_int,"SA_Trend%_July23.xlsx")
+getwd()
+
+Savgol1=read_excel("~/VM Forecasting/2023/March 2023/SA_Trend%_July23.xlsx", sheet=1)
+
+new=as.data.frame(Savgol1)
+#new1=read_excel("~/VM Forecasting/2023/Feb 2023/SA/SA_Trend%_June23.xlsxx", sheet=1)
+new=Savgol1[2:8]
+new=Trend1
+new[] <- lapply(new, function(x) type.convert(as.character(x)))
+
+#row means
+v1=as.data.frame(rowMeans(new[1]))
+v2=as.data.frame(rowMeans(new[2]))
+v3=as.data.frame(rowMeans(new[3]))
+v4=as.data.frame(rowMeans(new[4]))
+v5=as.data.frame(rowMeans(new[5]))
+v6=as.data.frame(rowMeans(new[6]))
+v7=as.data.frame(rowMeans(new[7]))
+
+colnames(v1)[1]='percentage'
+colnames(v2)[1]='percentage'
+colnames(v3)[1]='percentage'
+colnames(v4)[1]='percentage'
+colnames(v5)[1]='percentage'
+colnames(v6)[1]='percentage'
+colnames(v7)[1]='percentage'
+
+new_per=as.data.frame(rbind(v1,v2,v3,v4,v5,v6,v7))
+
+week=as.data.frame(rep(c(1,2,3,4,5,6,7),each=56))
+time1=read_excel("~/VM Forecasting/2022/November 2022/SA/SA_Trend%_Feb23.xlsx", sheet=2)
+time1=as.data.frame(time1)
+time=time1[1]
+str(time)
+colnames(time)[1]='Interval'
+# str(time_mct_t)
+# time=openxlsx::convertToDateTime(time)
+# time[] <- lapply(time, function(x) type.convert(as.character(x)))
+# time=as.data.frame(time)
+
+t1 <- as.data.frame(format(time$Interval  ,"%H:%M:%S"))
+t2<- as.data.frame(format(time$Interval ,"%H:%M:%S"))
+t3<- as.data.frame(format(time$Interval ,"%H:%M:%S"))
+t4<- as.data.frame(format(time$Interval ,"%H:%M:%S"))
+t5<- as.data.frame(format(time$Interval ,"%H:%M:%S"))
+t6<- as.data.frame(format(time$Interval ,"%H:%M:%S"))
+t7<- as.data.frame(format(time$Interval ,"%H:%M:%S"))
+
+colnames(t1)[1]="Time"
+colnames(t2)[1]="Time"
+colnames(t3)[1]="Time"
+colnames(t4)[1]="Time"
+colnames(t5)[1]="Time"
+colnames(t6)[1]="Time"
+colnames(t7)[1]="Time"
+
+
+Time=as.data.frame(rbind(t1,t2,t3,t4,t5,t6,t7))
+
+mobile_collections_per=cbind(new_per,Time,week)
+colnames(mobile_collections_per)[3]="week"
+write_xlsx(mobile_collections_per,"mobile_collections_per_intdata.xlsx")
+getwd()
+# Nov_Dec day forecast Data, May Data load seperatly
+mc1=read_excel("~/VM Forecasting/2023/March 2023/SA July23 Interval Forecast+Smoothening.xlsx",sheet=1)
+
+mc=mc1
+mc$weekday=wday(mc$Date)
+colnames(mc)[4]='weekday'
+
+cbind<-merge(mc,mobile_collections_per,by.x="weekday",by.y ="week",all.y = TRUE,all.x = FALSE )
+colnames(cbind)[4]='Dayforecast'
+cbind$Interval_forecast=cbind$Dayforecast*cbind$percentage
+
+# cbind$weekdays=weekdays(as.Date(cbind$`as.Date(dates_no)`))
+
+save.image(file="rdata_MC_Savgol_forecast_Feb23.RData")
+write_xlsx(cbind,"SA_Int_forecast_July23.xlsx")
+write_xlsx(cbind,"SA_Savgol_forecast_July23.xlsx")
+getwd()
