@@ -1,0 +1,566 @@
+library(dplyr)
+library(forecast)
+library(stringi)
+library(lubridate)
+library(ggplot2)
+library(tseries)
+library(readxl)
+library(writexl)
+library(naniar)
+library(zoo)
+library(PerformanceAnalytics)
+library(cowplot)
+library(scales)
+library(ggpubr)
+#library(DescTools)
+library(dhReg)
+
+#*****************************************************
+#           Mobile Care September 2020 Forecast
+#*****************************************************
+
+#Load the data
+Mobile_care=read_excel("~/VM Forecasting/2023/April 2023/SA/SA Actual Volume and Intervals.xlsx", sheet=1)
+Mobile_care=Mobile_care[,1:3]
+# mc=Mobile_care
+# Mobile_care=Mobile_care[1:1734,]
+
+colnames(Mobile_care)[1]='date'
+colnames(Mobile_care)[2]='volume'
+colnames(Mobile_care)[3]='WEEKDAY'
+
+#****EDA****
+#************
+
+#Take a peek at the dataset
+head(Mobile_care)
+tail(Mobile_care)
+# Summary of the data
+summary(Mobile_care)
+
+#extracting month year moth and week from the data variable
+Mobile_care$date=as.Date(Mobile_care$date)
+Mobile_care$MTH<-month(Mobile_care$date)
+Mobile_care$YEAR<-year(Mobile_care$date)
+Mobile_care$day<-day(Mobile_care$date)
+Mobile_care$WEEKDAY<-wday(Mobile_care$date)
+View(Mobile_care)
+
+#**** Missing Data *********
+#***************************
+
+# Sum of missing values
+apply(Mobile_care, 2, function(x) sum(is.na(x)))
+
+# View Missing values
+mis_pts=ggplot(Mobile_care, aes(x=WEEKDAY, y=volume))+geom_miss_point()
+
+# mean volume for every week
+aggregate(Mobile_care$volume, by=list(Mobile_care$WEEKDAY), mean, na.rm=T)
+# replace NA's with particular weekday mean
+Mobile_care$volume=ifelse(is.na(Mobile_care$volume), ifelse(Mobile_care$WEEKDAY==1,10423, 
+                                                        ifelse(Mobile_care$WEEKDAY==2,17232, 
+                                                               ifelse(Mobile_care$WEEKDAY==3,17709, 
+                                                                      ifelse(Mobile_care$WEEKDAY==4,17350,
+                                                                             ifelse(Mobile_care$WEEKDAY==5, 17406,
+                                                                                    ifelse(Mobile_care$WEEKDAY==6, 16475,
+                                                                                           ifelse(Mobile_care$WEEKDAY==7, 13717, Mobile_care$volume))))))),Mobile_care$volume )
+
+#Plot of data
+original_data=ggplot(Mobile_care, aes(x=date, y=volume))+geom_line()+labs(title = 'Data from Jan 2018 to August 2020 ')
+
+# Sum of missing values
+apply(Mobile_care, 2, function(x) sum(is.na(x)))
+
+#**** Check and measures for Outliers *****
+#*********************************************
+
+#checking call volume distibution percentile wise for total data
+round(quantile(Mobile_care$volume,c(0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.97,1)),0)
+
+#PLOTING outliers for the Dataset
+o1=ggplot(Mobile_care,aes(y=volume))+geom_boxplot()+labs(title = 'With Outliers')
+
+#*** Treating Outliers
+
+# Checking 5th percentile and 95th percentile
+#quantile(Dial_Free$volume, c(0.05, 0.95)) # 5%=225.0, 95%=689.1 
+#5th percentile value in age column if any value less than 225
+#Dial_Free$volume=ifelse(Dial_Free$volume<225, 225, Dial_Free$volume)
+
+weekdaymean1<-Mobile_care%>%group_by(WEEKDAY)%>%summarise(wm=mean(volume),sd=sd(volume))
+colnames(Mobile_care)
+Mobile_care<-merge(Mobile_care,weekdaymean1,by.x ="WEEKDAY",by.y ="WEEKDAY",all.x = TRUE,all.y = FALSE)
+Mobile_care$sd1.5<-Mobile_care$wm+Mobile_care$sd*1.5
+Mobile_care$sd1.5neg<-Mobile_care$wm-Mobile_care$sd*1.5
+Mobile_care$sd3<-Mobile_care$wm+Mobile_care$sd*3
+Mobile_care$sd3neg<-Mobile_care$wm-Mobile_care$sd*3
+
+Mobile_care<-Mobile_care[order(Mobile_care$date),]
+
+Mobile_care$mod_call_volume<-ifelse(Mobile_care$volume>Mobile_care$sd1.5|Mobile_care$volume<Mobile_care$sd1.5neg,Mobile_care$wm,Mobile_care$volume)
+Mobile_care$outlier_status<-ifelse(Mobile_care$volume>Mobile_care$sd1.5|Mobile_care$volume<Mobile_care$sd1.5neg,1,0)
+rem_outliers=ggplot(Mobile_care,aes(y=mod_call_volume))+geom_boxplot()+labs(title = ' after outlier treatment')
+colnames(Mobile_care)
+mod_vol_data=ggplot(Mobile_care,aes(x=date,y=mod_call_volume))+geom_line()
+
+# MC_Data=Mobile_care
+# 1059-20
+# Mobile_care=MC_Data[-c(1050:1059),]
+#***** Time Series Analysis ****
+#**********************************
+
+#converting into time series 
+findfrequency(Mobile_care)
+#mc_oct=Mobile_care[1:1035,]
+
+# Time Series data
+DF=ts(Mobile_care$mod_call_volume, start = 2, frequency = 7)
+
+# Plot of Time Series
+autoplot(DF)
+
+# Decompose
+autoplot(decompose(DF))
+
+#checking For stationary
+adf.test(DF)  #p-value = 0.01, 99% stationary
+
+#converting into test and and train
+
+#********** 31 days forecast for december ***************
+#checking length and time stamp
+options(max.print=1000000)
+length(DF) #1734
+time(DF)
+1795-152#1640
+# Tain And Test data
+DF_train4<-window(DF,start=2,end=236.2)
+DF_test4=window(DF,start=236.2)
+DFtr=as.data.frame(DF_train4)
+DFte=as.data.frame(DF_test4)
+
+#**** applying models ****
+#****************************
+
+#mean Model
+mean_model<-meanf(DF_train4,h=70)
+#Checking Accuracy
+accuracy(mean_model,DF_test4) # MAPE: 31.17
+#ploting
+plot(mean_model)
+#Checking assumptions
+autoplot(checkresiduals(mean_model$residuals))
+
+# Naive Model
+naive_model<-naive(DF_train4,h=70)
+#Checking Accuracy
+accuracy(naive_model,DF_test4) # MAPE : 34.52382
+#ploting
+plot(naive_model)
+#Checking assumptions
+autoplot(checkresiduals(naive_model$residuals))
+
+#holtwinter model
+df_hw2=HoltWinters(DF_train4)
+df_hw_test2=forecast(df_hw2, h=70)
+plot(df_hw_test2)
+accuracy(df_hw_test2, DF_test4) # MAPE: 16.29
+checkresiduals(df_hw2$residuals)
+
+#ets model
+et_DF=ets(DF_train4)
+et_DF_test=forecast(et_DF, h=70)
+plot(et_DF_test)
+accuracy(et_DF_test, DF_test4) # MAPE:12.04
+checkresiduals(et_DF$residuals)
+
+# tbats
+tbats_DF=tbats(DF_train4, lambda = BoxCox.lambda(DF))
+tbats_DF_test=forecast(tbats_DF, h=70)
+plot(tbats_DF_test)
+accuracy(tbats_DF_test, DF_test4) # MAPE: 12.57
+checkresiduals(tbats_DF_test$residuals)
+
+# arima
+arima_DF=auto.arima(DF_train4,trace=T)
+arima_DF_test=forecast(arima_DF, h=70)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test4) # MAPE: 15.15
+checkresiduals(arima_DF_test$residuals)
+
+# arima with BoxCox.lambda
+BoxCox.lambda(DF_train4) 
+arima_DF=auto.arima(DF_train4,trace=T, lambda = BoxCox.lambda(DF_train4))
+arima_DF_test=forecast(arima_DF, h=70)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test4) # MAPE:11.05
+checkresiduals(arima_DF_test$residuals)
+
+#stl
+stl_DF=stl(DF_train4, s.window = 'periodic')
+stl_DF_test=forecast(stl_DF, h=70)
+plot(stl_DF_test)
+accuracy(stl_DF_test, DF_test4) # MAPE: 12.88
+checkresiduals(stl_DF_test$residuals)
+
+#nnetar
+set.seed(75) 
+library(forecast)
+nnetar_df=nnetar(DF_train4)
+nnetar_df_test=forecast(nnetar_df, h=70, PI=F)
+plot(nnetar_df_test)
+accuracy(nnetar_df_test, DF_test4) # MAPE:13.51
+
+set.seed(30) 
+library(forecast)
+nnetar_df=nnetar(DF_train4)
+nnetar_df_test=forecast(nnetar_df, h=70, PI=F)
+plot(nnetar_df_test)
+accuracy(nnetar_df_test, DF_test4) # MAPE: 10.85
+
+# tbats forecast_for agreed num
+# tbats
+tbats_DF=tbats(DF)
+tbats_DF_forecast=forecast(tbats_DF, h=186)
+plot(tbats_DF_forecast)
+
+tbats_box_DF=tbats(DF, lambda = BoxCox.lambda(DF))
+tbats_box_DF_forecast=forecast(tbats_box_DF, h=186)
+plot(tbats_box_DF_forecast)
+
+stl_DF=stl(DF, s.window = 'periodic')
+stl_DF_test=forecast(stl_DF, h=186)
+plot(stl_DF_test)
+
+arima_DF=auto.arima(DF,trace=T)
+arima_DF_test=forecast(arima_DF, h=186)
+plot(arima_DF_test) 
+
+BoxCox.lambda(DF)
+arima_box_DF=auto.arima(DF,trace=T, lambda = BoxCox.lambda(DF))
+arima_box_DF_test=forecast(arima_box_DF, h=186)
+plot(arima_box_DF_test)
+
+df_hw1=HoltWinters(DF)
+df_hw_test1=forecast(df_hw1, h=186)
+plot(df_hw_test1)
+
+df_hw1_tuned=HoltWinters(DF, alpha = 0.9,beta=0.01) #alpha = 0.65
+df_hw_tuned_test1=forecast(df_hw1_tuned, h=186)
+plot(df_hw_tuned_test1)
+
+df_hw1_tuned=HoltWinters(DF, alpha = 0.07,beta=0.1) #alpha = 0.65
+df_hw_tuned_test1=forecast(df_hw1_tuned, h=186)
+plot(df_hw_tuned_test1)
+
+et_DF=ets(DF)
+et_DF_test=forecast(et_DF, h=186)
+plot(et_DF_test)
+
+#*** generating forecastdates for 45 days
+
+dates_no<-seq(as.Date("2023-03-29","%Y-%m-%d"),as.Date("2023-09-30","%Y-%m-%d"),by=1)
+
+dates_no<-as.data.frame(as.Date(dates_no))
+dates_no$`as.Date(dates_no)`<-as.Date(dates_no$`as.Date(dates_no)`)
+dates_no$V2<-wday(dates_no$`as.Date(dates_no)`)
+
+DF_hw<-as.data.frame(df_hw_test1)
+df_hw1_tuned<-as.data.frame(df_hw_tuned_test1)
+DF_tbats<-as.data.frame(tbats_DF_forecast)
+DF_tbats_box<-as.data.frame(tbats_box_DF_forecast)
+DF_arima<-as.data.frame(arima_DF_test)
+DF_arimabox<-as.data.frame(arima_box_DF_test)
+DF_forecast2<-cbind(dates_no,DF_hw$`Point Forecast`,DF_tbats$`Point Forecast`,
+                    DF_arima$`Point Forecast`, DF_arimabox$`Point Forecast`, 
+                    df_hw1_tuned$`Point Forecast`, DF_tbats_box$`Point Forecast`)
+
+DF_forecast2<-cbind(dates_no,df_hw1_tuned$`Point Forecast`, DF_arima$`Point Forecast`)
+
+
+write_xlsx(DF_forecast2,path = "SA_Day_Forecast_August23.xlsx")
+getwd()
+
+#Arima With BoxCox
+DF_forecast1<-as.data.frame(df_hw_tuned_test1)
+DF_forecast2<-cbind(dates_no,DF_forecast1)
+
+
+write_xlsx(DF_forecast2,path = "SA Day Forecast June_2023.xlsx")
+getwd()
+
+# HoltWinters Forecast Values
+#*** generating forecastdates for 45 days
+
+DF_forecast1<-as.data.frame(df_hw_test1)
+DF_forecast2<-cbind(dates_no,DF_forecast1)
+
+
+write_xlsx(DF_forecast2,path = "10_08_45days_HW_DF_Daylevel_values.xlsx")
+getwd()
+
+#tbats Forecasted Values
+#*** generating forecastdates for 45 days
+DF_forecast1<-as.data.frame(tbats_DF_forecast)
+DF_forecast2<-cbind(dates_no,DF_forecast1)
+
+
+write_xlsx(DF_forecast2,path = "10_08_45days_tbats_DF_Daylevel_values.xlsx")
+getwd()
+# save Datasets
+save.image(file = "10_08_DF_September_Forecast_rd.RData")
+
+################################################################
+# Dynamic Hormonic Regression
+#install.packages('dhReg')
+
+
+fit <- auto.arima(DF_train4, xreg = fourier(DF_train4, K = 3),
+                  seasonal = FALSE, lambda = 0) #AICc=-437.99
+fit_test=forecast(fit,xreg=fourier(DF_train4, K=3, h=78))
+autoplot(fit_test) 
+accuracy(fit_test, DF_test4) #MAPE: 19.72
+
+fit <- auto.arima(DF_train4, xreg = fourier(DF_train4, K = 1),
+                  seasonal = FALSE, lambda = 0) #AICc=-290.54
+fit_test=forecast(fit,xreg=fourier(DF_train4, K=1, h=78))
+autoplot(fit_test) 
+accuracy(fit_test, DF_test4) #MAPE: 22.22
+
+fit <- auto.arima(DF_train4, xreg = fourier(DF_train4, K = 2),
+                  seasonal = FALSE, lambda = 0) #AICc=-373.5
+fit_test=forecast(fit,xreg=fourier(DF_train4, K=2, h=78))
+autoplot(fit_test) 
+accuracy(fit_test, DF_test4) #MAPE: 22.11
+
+fit <- auto.arima(DF, xreg = fourier(DF, K = 1),
+                  seasonal = FALSE, lambda = 0) #AICc=-399.08
+fit_test=forecast(fit,xreg=fourier(DF, K=1, h=162))
+autoplot(fit_test) 
+
+fit <- auto.arima(DF, xreg = fourier(DF, K = 2),
+                  seasonal = FALSE, lambda = 0) #AICc=-472.3
+fit_test=forecast(fit,xreg=fourier(DF, K=2, h=162))
+autoplot(fit_test)
+
+fit <- auto.arima(DF, xreg = fourier(DF, K = 3),
+                  seasonal = FALSE, lambda = 0) #AICc=-563.13
+fit_test=forecast(fit,xreg=fourier(DF, K=3, h=162))
+autoplot(fit_test)
+
+
+
+#********** 91 days Forecast ***************
+length(DF) #497
+time(DF)#497-91=406
+
+#General data
+DF_train9<-window(DF,start=3,end=70.51)
+DF_test9<-window(DF,start=70.51)
+
+#**** applying models ****
+#****************************
+
+
+#holtwinter model
+df_hw1=hw(DF_train)
+df_hw_test1=forecast(DF_train9, h=91)
+plot(df_hw_test1)
+accuracy(df_hw_test1, DF_test9) # MAPE: 13.20
+checkresiduals(df_hw1$residuals)
+
+
+#ets model
+et_DF=ets(DF_train9)
+et_DF_test=forecast(et_DF, h=91)
+plot(et_DF_test)
+accuracy(et_DF_test, DF_test9) # MAPE:13.2
+checkresiduals(et_DF$residuals)
+
+# tbats
+tbats_DF=tbats(DF_train9)
+tbats_DF_test=forecast(tbats_DF, h=91)
+plot(tbats_DF_test)
+accuracy(tbats_DF_test, DF_test9) # MAPE: 17.31
+checkresiduals(tbats_DF_test$residuals)
+
+# arima
+arima_DF=auto.arima(DF_train9,trace=T)
+arima_DF_test=forecast(arima_DF, h=91)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test9) # MAPE: 17.47
+checkresiduals(arima_DF_test$residuals)
+
+# arima with BoxCox.lambda
+BoxCox.lambda(DF_train) 
+arima_DF=auto.arima(DF_train9,trace=T, lambda = BoxCox.lambda(DF_train))
+arima_DF_test=forecast(arima_DF, h=91)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test9) # MAPE: 15.17
+checkresiduals(arima_DF_test$residuals)
+
+#stl
+stl_DF=stl(DF_train9, s.window = 'periodic')
+stl_DF_test=forecast(stl_DF, h=91)
+plot(stl_DF_test)
+accuracy(stl_DF_test, DF_test9) # MAPE: 13.12
+checkresiduals(stl_DF_test$residuals)
+
+#********** 61 days Forecast ***************
+
+# Checking time stamp
+length(DF) #$497
+time(DF)
+#General data
+DF_train6<-window(DF,start=3,end=75.51)
+DF_test6<-window(DF,start=75.51)
+
+#holtwinter model
+df_hw1=HoltWinters(DF_train6)
+df_hw_test1=forecast(DF_train6, h=61)
+plot(df_hw_test1)
+accuracy(df_hw_test1, DF_test6) # MAPE:12.81
+checkresiduals(df_hw1$residuals)
+
+#ets model
+et_DF=ets(DF_train6)
+et_DF_test=forecast(et_DF, h=61)
+plot(et_DF_test)
+accuracy(et_DF_test, DF_test6) # MAPE:12.81
+checkresiduals(et_DF$residuals)
+
+# tbats
+tbats_DF=tbats(DF_train6)
+tbats_DF_test=forecast(tbats_DF, h=61)
+plot(tbats_DF_test)
+accuracy(tbats_DF_test, DF_test6) # MAPE: 14.55
+checkresiduals(tbats_DF_test$residuals)
+
+# arima
+arima_DF=auto.arima(DF_train6,trace=T)
+arima_DF_test=forecast(arima_DF, h=61)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test6) # MAPE: 14.52
+checkresiduals(arima_DF_test$residuals)
+
+# arima with BoxCox.lambda
+BoxCox.lambda(DF_train6) 
+arima_DF=auto.arima(DF_train6,trace=T, lambda = BoxCox.lambda(DF_train))
+arima_DF_test=forecast(arima_DF, h=91)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test6) # MAPE: 11.74
+checkresiduals(arima_DF_test$residuals)
+
+#stl
+stl_DF=stl(DF_train6, s.window = 'periodic')
+stl_DF_test=forecast(stl_DF, h=61)
+plot(stl_DF_test)
+accuracy(stl_DF_test, DF_test6) # MAPE: 12.86
+checkresiduals(stl_DF_test$residuals)
+
+
+#**************************************************************
+#********** 31 days Forecast ***************
+
+# Checking time stamp
+length(DF) #$497
+497-31
+time(DF)#466
+#General data
+DF_train3<-window(DF,start=3,end=80.51)
+DF_test3<-window(DF,start=80.51)
+
+#***applying models  ****
+
+#holtwinter model
+df_hw1=HoltWinters(DF_train3)
+df_hw_test1=forecast(DF_train3, h=31)
+plot(df_hw_test1)
+accuracy(df_hw_test1, DF_test3) # MAPE: 12.56
+checkresiduals(df_hw1$residuals)
+
+#ets model
+et_DF=ets(DF_train3)
+et_DF_test=forecast(et_DF, h=31)
+plot(et_DF_test)
+accuracy(et_DF_test, DF_test3) # MAPE:12.56
+checkresiduals(et_DF$residuals)
+
+# tbats
+tbats_DF=tbats(DF_train3)
+tbats_DF_test=forecast(tbats_DF, h=31)
+plot(tbats_DF_test)
+accuracy(tbats_DF_test, DF_test3) # MAPE: 11.58
+checkresiduals(tbats_DF_test$residuals)
+
+# arima
+arima_DF=auto.arima(DF_train3,trace=T)
+arima_DF_test=forecast(arima_DF, h=31)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test3) # MAPE: 15.46
+checkresiduals(arima_DF_test$residuals)
+
+BoxCox.lambda(DF_train3) 
+arima_DF=auto.arima(DF_train3,trace=T, lambda = BoxCox.lambda(DF_train))
+arima_DF_test=forecast(arima_DF, h=91)
+plot(arima_DF_test)
+accuracy(arima_DF_test, DF_test3) # MAPE:12.31
+checkresiduals(arima_DF_test$residuals)
+
+
+#stl
+stl_DF=stl(DF_train3, s.window = 'periodic')
+stl_DF_test=forecast(stl_DF, h=31)
+plot(stl_DF_test)
+accuracy(stl_DF_test, DF_test3) # MAPE: 12.59
+checkresiduals(stl_DF_test$residuals)
+
+# HW: 13.20, 12.81, 12.56: 13.0
+
+# tbats : 17.31, 14.55,11.58: 16.74
+
+# arima with lambda: 15.17, 11.74, 12.31: 14.7
+
+#*********************************************
+# Interval Forecast
+#*********************************************
+#Load the data
+DF_Interval=read_excel("3Week_Interval_Data.xlsx", sheet=1)
+
+# Changing column name
+colnames(DF_Interval)[1]='Time_Interval'
+
+# Remove first row(Weekday)
+DF_Interval=DF_Interval[-1,]
+
+DF_Interval$Time_Interval=openxlsx::convertToDateTime(DF_Interval$Time_Interval,na.rm=T)
+DF_Interval$Time_Interval=format(DF_Interval$Time_Interval, "%H:%M:%S",na.rm=T)
+View(DF_Interval)
+
+df_int=as.data.frame(t(DF_Interval))
+
+# Converting Weekdays as header for data
+names(df_int) <- as.matrix(df_int[1, ])
+df_int <- df_int[-1, ]
+df_int[] <- lapply(df_int, function(x) type.convert(as.character(x)))
+df_int=as.data.frame(df_int)
+View(df_int)
+
+# Converting to date format
+Date=rownames(df_int)
+View(Date)
+rownames(df_int)=NULL
+df_int_data=cbind(Date,df_int)
+df_int_data$Date=openxlsx::convertToDate(df_int_data$Date,na.rm=T)
+
+df_int_data$weekday=wday(df_int_data$Date)
+View(df_int_data)
+# mean volume for every week
+Wday_int_avg=as.data.frame(aggregate(df_int_data, by=list(df_int_data$weekday), mean, na.rm=T))
+
+# # Replacing interval missing values with zero
+sum(is.na(df_int_data))
+
+# Transpose of Weekday interval avg
+Wday_int_avg$Date=NULL
